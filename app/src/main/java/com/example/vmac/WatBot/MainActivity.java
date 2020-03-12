@@ -5,11 +5,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Typeface;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.provider.ContactsContract;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
@@ -118,6 +121,7 @@ public class MainActivity extends AppCompatActivity {
         this.initialRequest = true;
 
 
+        //Audio Record permission
         int permission = ContextCompat.checkSelfPermission(this,
                 Manifest.permission.RECORD_AUDIO);
 
@@ -128,6 +132,16 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "Permission to record was already granted");
         }
 
+        //Access Contacts Permission
+        permission = ContextCompat.checkSelfPermission(this,
+                Manifest.permission.READ_CONTACTS);
+
+        if (permission != PackageManager.PERMISSION_GRANTED) {
+            Log.i(TAG, "Permission to Call denied");
+            makeRequest();
+        } else {
+            Log.i(TAG, "Permission to Call was already granted");
+        }
 
         recyclerView.addOnItemTouchListener(new RecyclerTouchListener(getApplicationContext(), recyclerView, new ClickListener() {
             @Override
@@ -164,8 +178,6 @@ public class MainActivity extends AppCompatActivity {
         createServices();
         sendMessage();
     }
-
-    ;
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -217,9 +229,10 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
+    //PERMISSIONS
     protected void makeRequest() {
         ActivityCompat.requestPermissions(this,
-                new String[]{Manifest.permission.RECORD_AUDIO},
+                new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE, Manifest.permission.SEND_SMS},
                 MicrophoneHelper.REQUEST_PERMISSION);
     }
 
@@ -484,19 +497,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-
-
-
-
-
-
-
-
-
+    //IBM Watson Dashboard link: https://eu-gb.assistant.watson.cloud.ibm.com/eu-gb/crn:v1:bluemix:public:conversation:eu-gb:a~2F3ae22790ecf84e0a8898b55c4375073c:4c7a928f-1e7a-42e2-9ed7-a984760ab5a8::/skills/05b68df9-9713-444e-ab17-5aa7c1e9a4e8/build/intents
 
     //====================================MAIN FUNCTIONS==================================
     private void mainFunction(RuntimeIntent jobIntent, List<RuntimeEntity> lstEntities) {
-
 
 
         if (jobIntent.intent().equals("open_app")) {
@@ -507,9 +511,136 @@ public class MainActivity extends AppCompatActivity {
             if (!openApp(strAppName)) {
                 new SayTask().execute("The " + strAppName + " does not appear to be installed.");
             }
+
+
+        } else if (jobIntent.intent().equals("call")) {
+            //For Calling
+            Log.d(TAG, "mainFunction: Calling");
+
+            String strContactName = "";
+            if (getEntity("person", lstEntities).value() != null) {
+                strContactName = getEntity("person", lstEntities).value();
+                Log.d(TAG, "Call : " + strContactName);
+
+                //Find the Contact Phone Number
+                String strContactPhoneNumber = getPhone(strContactName, getApplicationContext());
+                if (strContactPhoneNumber == null)
+                    new SayTask().execute("No Phone number for the  " + strContactPhoneNumber + " found.");
+
+                //Request permission is not given
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+                    makeRequest();
+                    return;
+                }
+
+                //Call
+                Intent intent = new Intent(Intent.ACTION_CALL, Uri.parse("tel:" + strContactPhoneNumber));
+                startActivity(intent);
+                new SayTask().execute("No Phone number for the  " + strContactPhoneNumber + " found.");
+
+            } else if (getEntity("sys-person", lstEntities).value() != null) {
+                strContactName = getEntity("sys-person", lstEntities).value();
+
+                //Find the Contact Phone Number
+                String strContactPhoneNumber = getPhone(strContactName, getApplicationContext());
+                if (strContactPhoneNumber == null)
+                    new SayTask().execute("No Phone number for the  " + strContactPhoneNumber + " found.");
+
+
+                //Request permission is not given
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+                    makeRequest();
+                    return;
+                }
+
+
+                //Call
+                Intent intent = new Intent(Intent.ACTION_CALL, Uri.parse("tel:" + strContactPhoneNumber));
+                startActivity(intent);
+                new SayTask().execute("No Phone number for the  " + strContactPhoneNumber + " found.");
+
+            } else {
+                new SayTask().execute("The Caller name could not be identified. Please try again later.");
+            }
+
+
+        } else if (jobIntent.intent().equals("sms")) {
+            //For SMS
+            Log.d(TAG, "mainFunction: SMS");
+
+            String strContactName = "";
+            if (getEntity("person", lstEntities).value() != null) {
+                strContactName = getEntity("person", lstEntities).value();
+                //Find the Contact Phone Number
+                String strContactPhoneNumber = getPhone(strContactName, getApplicationContext());
+                if (strContactPhoneNumber == null)
+                    new SayTask().execute("No Phone number for the  " + strContactPhoneNumber + " found.");
+
+                //Request permission is not given
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+                    makeRequest();
+                    return;
+                }
+
+                //Get SMS Body
+                String strMessageBody = "";
+                strMessageBody = getEntity("message_body", lstEntities).value();
+                if (strMessageBody == null || strMessageBody.equals("")) {
+                    new SayTask().execute("No SMS body found.");
+                    return;
+                }
+
+                //SMS
+                sendSMS(strContactPhoneNumber, strMessageBody);
+                new SayTask().execute("Message sent to " + strContactPhoneNumber + ".");
+
+            } else if (getEntity("sys-person", lstEntities).value() != null) {
+                strContactName = getEntity("sys-person", lstEntities).value();
+
+                //Find the Contact Phone Number
+                String strContactPhoneNumber = getPhone(strContactName, getApplicationContext());
+                if (strContactPhoneNumber == null)
+                    new SayTask().execute("No Phone number " + strContactPhoneNumber + " found.");
+
+                //Request permission is not given
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+                    makeRequest();
+                    return;
+                }
+
+                //Get SMS Body
+                String strMessageBody = "";
+                strMessageBody = getEntity("message_body", lstEntities).value();
+                if (strMessageBody == null || strMessageBody.equals("")) {
+                    new SayTask().execute("No SMS body found.");
+                    return;
+                }
+
+                //SMS
+                sendSMS(strContactPhoneNumber, strMessageBody);
+                new SayTask().execute("Message sent to " + strContactPhoneNumber + ".");
+
+            } else {
+                new SayTask().execute("The Caller name could not be identified. Please try again later.");
+            }
+
+        } else if (jobIntent.intent().equals("search_query")) {
+            //For Search Queries
+            Log.d(TAG, "mainFunction: Search");
+
+            String strSearch = getEntity("search_query", lstEntities).value();
+            if (strSearch == null || strSearch == "") {
+                new SayTask().execute("I do not know what to search, Please try searching any other way.");
+                return;
+            }
+
+            //Search in Google
+            String url = "http://www.google.com/search?q=" + strSearch;
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setData(Uri.parse(url));
+            startActivity(i);
         }
     }
-
 
     private RuntimeEntity getEntity(String strSearch, List<RuntimeEntity> lstEntities) {
         //Get the correct entity
@@ -525,6 +656,8 @@ public class MainActivity extends AppCompatActivity {
         return entity;
     }
 
+
+    //=========================== App Functions ===========================
     //For Opening apps
     boolean openApp(String appName) {
         boolean blappFound = false;
@@ -567,7 +700,47 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
+    //Get Phone Number from a contact name
+    public String getPhone(final String contactName, Context context) {
+        String result = null;
+        String selection = ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " like'%" + contactName + "%'";
+        String[] projection = new String[]{ContactsContract.CommonDataKinds.Phone.NUMBER};
+        Cursor c = context.getContentResolver().query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection, selection, null, null);
+        if (c.moveToFirst()) {
+            result = c.getString(0);
+        }
+        c.close();
+        if (result == null)
+            result = "This contact is not saved into your device";
+        return result;
+    }
 
+    public String getContactName(final String phoneNumber, Context context) {
+        Uri uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber));
+
+        String[] projection = new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME};
+
+        String contactName = "";
+        Cursor cursor = context.getContentResolver().query(uri, projection, null, null, null);
+
+        if (cursor != null) {
+            if (cursor.moveToFirst()) {
+                contactName = cursor.getString(0);
+            }
+            cursor.close();
+        }
+
+        return contactName;
+    }
+
+    //Send SMS
+    protected void sendSMS(String strContact, String strMessageBody) {
+        Uri uri = Uri.parse("smsto:" + strContact);
+        Intent intent = new Intent(Intent.ACTION_SENDTO, uri);
+        intent.putExtra("sms_body", strMessageBody);
+        startActivity(intent);
+    }
 }
 
 
