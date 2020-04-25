@@ -13,6 +13,9 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.ContactsContract;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
@@ -56,6 +59,7 @@ import com.ibm.watson.text_to_speech.v1.model.SynthesizeOptions;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -73,14 +77,21 @@ public class MainActivity extends AppCompatActivity {
     private static String TAG = "MainActivity";
     private static final int RECORD_REQUEST_CODE = 101;
     private boolean listening = false;
-    private MicrophoneInputStream capture;
+
+
+    //Speech Recognizer
+    final SpeechRecognizer mSpeechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+    final Intent mSpeechRecognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+
+//    private MicrophoneInputStream capture;
     private Context mContext;
-    private MicrophoneHelper microphoneHelper;
+//    private MicrophoneHelper;
 
     private Assistant watsonAssistant;
     private Response<SessionResponse> watsonAssistantSession;
-    private SpeechToText speechService;
+    //    private SpeechToText speechService;
     private TextToSpeech textToSpeech;
+    String strLastMessage="";
 
     private void createServices() {
         watsonAssistant = new Assistant("2019-02-28", new IamAuthenticator(mContext.getString(R.string.assistant_apikey)));
@@ -89,8 +100,8 @@ public class MainActivity extends AppCompatActivity {
         textToSpeech = new TextToSpeech(new IamAuthenticator((mContext.getString(R.string.TTS_apikey))));
         textToSpeech.setServiceUrl(mContext.getString(R.string.TTS_url));
 
-        speechService = new SpeechToText(new IamAuthenticator(mContext.getString(R.string.STT_apikey)));
-        speechService.setServiceUrl(mContext.getString(R.string.STT_url));
+//        speechService = new SpeechToText(new IamAuthenticator(mContext.getString(R.string.STT_apikey)));
+//        speechService.setServiceUrl(mContext.getString(R.string.STT_url));
     }
 
     @Override
@@ -108,10 +119,73 @@ public class MainActivity extends AppCompatActivity {
         inputMessage.setTypeface(typeface);
         recyclerView = findViewById(R.id.recycler_view);
 
+        //For Microphone
         messageArrayList = new ArrayList<>();
         mAdapter = new ChatAdapter(messageArrayList);
-        microphoneHelper = new MicrophoneHelper(this);
 
+        mSpeechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        mSpeechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
+        mSpeechRecognizer.setRecognitionListener(new RecognitionListener() {
+            @Override
+            public void onReadyForSpeech(Bundle bundle) {}
+
+            @Override
+            public void onBeginningOfSpeech() {}
+
+            @Override
+            public void onRmsChanged(float v) {}
+
+            @Override
+            public void onBufferReceived(byte[] bytes) {}
+
+            @Override
+            public void onEvent(int i, Bundle bundle) {}
+
+            @Override
+            public void onEndOfSpeech() {
+
+            }
+
+            @Override
+            public void onError(int i) {
+                enableMicButton();
+            }
+
+            @Override
+            public void onResults(Bundle bundle) {
+                //getting all the matches
+                ArrayList<String> matches = bundle
+                        .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+
+                //displaying the first match
+                if (matches != null){
+                    String strTMP=matches.get(0);
+                    if (checkInternetConnection() && !strLastMessage.equals(strTMP)) {
+                        strLastMessage=matches.get(0);
+                        showMicText(strLastMessage);
+                        sendMessage();
+                        enableMicButton();
+                    } else {
+                    }
+                }
+            }
+
+            @Override
+            public void onPartialResults(Bundle bundle) {
+                ArrayList<String> matches = bundle
+                        .getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+
+                //displaying the first match
+                if (matches != null) showMicText(matches.get(0));
+            }
+        });
+
+
+
+
+//        microphoneHelper = new MicrophoneHelper(this);
+
+        //Load the layouts
         LinearLayoutManager layoutManager = new LinearLayoutManager(this);
         layoutManager.setStackFromEnd(true);
         recyclerView.setLayoutManager(layoutManager);
@@ -155,7 +229,6 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onLongClick(View view, int position) {
                 recordMessage();
-
             }
         }));
 
@@ -228,6 +301,32 @@ public class MainActivity extends AppCompatActivity {
         // if (!permissionToRecordAccepted ) finish();
 
     }
+
+
+    /**
+     * Check Internet Connection
+     *
+     * @return
+     */
+    private boolean checkInternetConnection() {
+        // get Connectivity Manager object to check connection
+        ConnectivityManager cm =
+                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+        boolean isConnected = activeNetwork != null &&
+                activeNetwork.isConnectedOrConnecting();
+
+        // Check for network connections
+        if (isConnected) {
+            return true;
+        } else {
+            Toast.makeText(this, " No Internet Connection available ", Toast.LENGTH_LONG).show();
+            return false;
+        }
+
+    }
+
 
     //PERMISSIONS
     protected void makeRequest() {
@@ -340,6 +439,9 @@ public class MainActivity extends AppCompatActivity {
                         });
 
 
+                        //Clear last string
+                        strLastMessage="";
+
                         //For Executing the function
                         List<RuntimeIntent> lstIntents = response.getResult().getOutput().getIntents();
                         List<RuntimeEntity> lstEntities = response.getResult().getOutput().getEntities();
@@ -371,66 +473,46 @@ public class MainActivity extends AppCompatActivity {
     //Record a message via Watson Speech to Text
     private void recordMessage() {
         if (listening != true) {
-            capture = microphoneHelper.getInputStream(true);
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        speechService.recognizeUsingWebSocket(getRecognizeOptions(capture), new MicrophoneRecognizeDelegate());
-                    } catch (Exception e) {
-                        showError(e);
-                    }
-                }
-            }).start();
+            mSpeechRecognizer.startListening(mSpeechRecognizerIntent);
             listening = true;
             Toast.makeText(MainActivity.this, "Listening....Click to Stop", Toast.LENGTH_LONG).show();
+//            capture = microphoneHelper.getInputStream(true);
+//            new Thread(new Runnable() {
+//                @Override
+//                public void run() {
+//                    try {
+//                        speechService.recognizeUsingWebSocket(getRecognizeOptions(capture), new MicrophoneRecognizeDelegate());
+//                    } catch (Exception e) {
+//                        showError(e);
+//                    }
+//                }
+//            }).start();
 
         } else {
-            try {
-                microphoneHelper.closeInputStream();
-                listening = false;
-                Toast.makeText(MainActivity.this, "Stopped Listening....Click to Start", Toast.LENGTH_LONG).show();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-
+            mSpeechRecognizer.stopListening();
+            listening = false;
+//            try {
+//                microphoneHelper.closeInputStream();
+//                listening = false;
+//                Toast.makeText(MainActivity.this, "Stopped Listening....Click to Start", Toast.LENGTH_LONG).show();
+//            } catch (Exception e) {
+//                e.printStackTrace();
+//            }
         }
     }
 
-    /**
-     * Check Internet Connection
-     *
-     * @return
-     */
-    private boolean checkInternetConnection() {
-        // get Connectivity Manager object to check connection
-        ConnectivityManager cm =
-                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
 
-        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
-        boolean isConnected = activeNetwork != null &&
-                activeNetwork.isConnectedOrConnecting();
 
-        // Check for network connections
-        if (isConnected) {
-            return true;
-        } else {
-            Toast.makeText(this, " No Internet Connection available ", Toast.LENGTH_LONG).show();
-            return false;
-        }
-
-    }
-
-    //Private Methods - Speech to Text
-    private RecognizeOptions getRecognizeOptions(InputStream audio) {
-        return new RecognizeOptions.Builder()
-                .audio(audio)
-                .contentType(ContentType.OPUS.toString())
-                .model("en-US_BroadbandModel")
-                .interimResults(true)
-                .inactivityTimeout(2000)
-                .build();
-    }
+//    //Private Methods - Speech to Text
+//    private RecognizeOptions getRecognizeOptions(InputStream audio) {
+//        return new RecognizeOptions.Builder()
+//                .audio(audio)
+//                .contentType(ContentType.OPUS.toString())
+//                .model("en-US_BroadbandModel")
+//                .interimResults(true)
+//                .inactivityTimeout(2000)
+//                .build();
+//    }
 
     private void showMicText(final String text) {
         runOnUiThread(new Runnable() {
@@ -460,19 +542,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-
-    private class SayTask extends AsyncTask<String, Void, String> {
-        @Override
-        protected String doInBackground(String... params) {
-            streamPlayer.playStream(textToSpeech.synthesize(new SynthesizeOptions.Builder()
-                    .text(params[0])
-                    .voice(SynthesizeOptions.Voice.EN_US_LISAVOICE)
-                    .accept(HttpMediaType.AUDIO_WAV)
-                    .build()).execute().getResult());
-            return "Did synthesize";
-        }
-    }
-
     //Watson Speech to Text Methods.
     private class MicrophoneRecognizeDelegate extends BaseRecognizeCallback {
         @Override
@@ -494,6 +563,30 @@ public class MainActivity extends AppCompatActivity {
             enableMicButton();
         }
 
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+    //For Speaking
+    private class SayTask extends AsyncTask<String, Void, String> {
+        @Override
+        protected String doInBackground(String... params) {
+            streamPlayer.playStream(textToSpeech.synthesize(new SynthesizeOptions.Builder()
+                    .text(params[0])
+                    .voice(SynthesizeOptions.Voice.EN_US_LISAVOICE)
+                    .accept(HttpMediaType.AUDIO_WAV)
+                    .build()).execute().getResult());
+            return "Did synthesize";
+        }
     }
 
 
@@ -629,7 +722,7 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "mainFunction: Search");
 
             String strSearch = getEntity("search_query", lstEntities).value();
-            if (strSearch == null || strSearch == "") {
+            if (strSearch == null || strSearch.equals("")) {
                 new SayTask().execute("I do not know what to search, Please try searching any other way.");
                 return;
             }
@@ -660,7 +753,7 @@ public class MainActivity extends AppCompatActivity {
     //=========================== App Functions ===========================
     //For Opening apps
     boolean openApp(String appName) {
-        boolean blappFound = false;
+        boolean blAppFound = false;
 
         final PackageManager pm = getApplicationContext().getPackageManager();
         List<ApplicationInfo> lstInstalledApps = pm.getInstalledApplications(0);
@@ -670,33 +763,17 @@ public class MainActivity extends AppCompatActivity {
 
             final String applicationName = (String) (ai != null ? pm.getApplicationLabel(ai) : "unknown");
             Log.d("", applicationName);
-            if (applicationName != "unknown" && applicationName.toLowerCase().trim().equals(appName)) {
+            if (!applicationName.equals("unknown") && applicationName.toLowerCase().trim().equals(appName.toLowerCase().trim())) {
                 //The actual code for opening apps
                 Intent launchIntent = getPackageManager().getLaunchIntentForPackage(ai.packageName);
                 if (launchIntent != null) {
                     startActivity(launchIntent);//null pointer check in case package name was not found
                 }
-                blappFound = true;
+                blAppFound = true;
                 break;
             }
         }
-
-        if (blappFound == false) {
-            for (int i = 0; i < lstInstalledApps.size() - 1; i++) {
-                ApplicationInfo ai = lstInstalledApps.get(i);
-                final String applicationName = (String) (ai != null ? pm.getApplicationLabel(ai) : "unknown");
-                if (applicationName != "unknown" && applicationName.toLowerCase().trim().contains(appName)) {
-                    //The actual code for opening apps
-                    Intent launchIntent = getPackageManager().getLaunchIntentForPackage(ai.packageName);
-                    if (launchIntent != null) {
-                        startActivity(launchIntent);//null pointer check in case package name was not found
-                    }
-                    blappFound = true;
-                    break;
-                }
-            }
-        }
-        return blappFound;
+        return blAppFound;
     }
 
 
